@@ -1,0 +1,48 @@
+name: Verify
+
+# The corpus claims to be reproducible without any implementation of the protocol. This job is that
+# claim under test: it installs nothing, and runs on a bare Python.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  reproduce:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: No implementation is installed
+        run: |
+          if python -c "import boltzmann" 2>/dev/null; then
+            echo "an implementation is importable; this job would not prove independence" >&2
+            exit 1
+          fi
+
+      - name: Reproduce the corpus
+        run: python tools/verify.py
+
+      - name: Every vector file declares what produced it
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          failures = []
+          for path in sorted(pathlib.Path("vectors").glob("*.json")):
+              document = json.loads(path.read_text(encoding="utf-8"))
+              for field, expected in (("boltzmann", 1), ("serialization", "jcs/1"), ("hash", "sha256")):
+                  if document.get(field) != expected:
+                      failures.append(f"{path.name}: {field} is {document.get(field)!r}, expected {expected!r}")
+              if not (document.get("vectors") or document.get("cases")):
+                  failures.append(f"{path.name}: is empty, which is a promise with nothing behind it")
+          for failure in failures:
+              print(f"FAIL  {failure}")
+          sys.exit(1 if failures else 0)
+          PY

@@ -367,6 +367,16 @@ def check_schema_selection(report: Report) -> None:
     for vector in document["vectors"]:
         name = vector["name"]
         satisfies = vector["satisfies"]
+        if vector.get("refused"):
+            # A version that removes a required member makes the two versions disjoint rather than
+            # nested, so a payload can satisfy neither. That is a case oldest-that-fits has to have
+            # an answer for, and the answer is a refusal.
+            report.check(satisfies == [], f"schema_selection/{name}: satisfies no registered schema")
+            report.check(
+                "schema_version" not in vector,
+                f"schema_selection/{name}: a refused payload is assigned no version",
+            )
+            continue
         report.check(bool(satisfies), f"schema_selection/{name}: satisfies at least one schema")
         report.check(
             vector["schema_version"] == min(satisfies),

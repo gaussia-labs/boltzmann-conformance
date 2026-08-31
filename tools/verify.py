@@ -186,6 +186,78 @@ def verify_inclusion(leaf: bytes, index: int, size: int, path: list[bytes], root
     return last == 0 and running == root
 
 
+# --- Actor identifiers --------------------------------------------------------------------------
+
+LOWER = "abcdefghijklmnopqrstuvwxyz0123456789"
+LOCAL_EXTRA = "._%+-"
+LABEL_EXTRA = "-"
+SEGMENT_EXTRA = "._-"
+
+MAX_IDENTIFIER = 320
+
+
+def _is_run(value: str, allowed: str) -> bool:
+    return bool(value) and all(char in allowed for char in value)
+
+
+def _valid_label(label: str) -> bool:
+    if not 1 <= len(label) <= 63:
+        return False
+    if not _is_run(label, LOWER + LABEL_EXTRA):
+        return False
+    return label[0] in LOWER and label[-1] in LOWER
+
+
+def _valid_domain(domain: str) -> bool:
+    if not 1 <= len(domain) <= 255:
+        return False
+    labels = domain.split(".")
+    if len(labels) < 2:
+        return False
+    return all(_valid_label(label) for label in labels)
+
+
+def _valid_segment(segment: str) -> bool:
+    if not 1 <= len(segment) <= 128:
+        return False
+    if not _is_run(segment, LOWER + SEGMENT_EXTRA):
+        return False
+    return segment[0] in LOWER and segment[-1] in LOWER
+
+
+def actor_id_form(value: str) -> str | None:
+    """The form an actor identifier takes, or ``None`` when it takes neither.
+
+    Implemented here from the rule rather than imported from anywhere, for the same reason the
+    canonical serializer above is: an identifier grammar two implementations read differently
+    produces two names for one party, and nothing fails when it happens.
+    """
+    if not value or len(value) > MAX_IDENTIFIER:
+        return None
+    if any(char.isspace() or ord(char) < 0x20 or ord(char) > 0x7E for char in value):
+        return None
+    if "@" in value and "/" in value:
+        return None
+
+    if "@" in value:
+        local, _, domain = value.partition("@")
+        if not 1 <= len(local) <= 64 or ".." in local:
+            return None
+        if not _is_run(local, LOWER + LOCAL_EXTRA):
+            return None
+        if local[0] == "." or local[-1] == ".":
+            return None
+        return "address" if _valid_domain(domain) else None
+
+    if value.count("/") == 1:
+        namespace, _, name = value.partition("/")
+        if _valid_segment(namespace) and _valid_segment(name):
+            return "namespaced"
+        return None
+
+    return None
+
+
 # --- The checks -------------------------------------------------------------------------------
 
 
@@ -311,6 +383,25 @@ def check_schema_selection(report: Report) -> None:
         )
 
 
+def check_actor_ids(report: Report) -> None:
+    """The identifier grammar, reproduced rather than trusted.
+
+    A rejection is checked as strictly as an acceptance. An implementation that quietly lowercased,
+    trimmed, or stripped a scheme prefix would pass every accepting vector and still compute a
+    different block_id than everyone else for the same record, which is exactly the failure the
+    corpus exists to catch.
+    """
+    document = load("actor_ids.json")
+    check_header(report, "actor_ids", document)
+    for vector in document["vectors"]:
+        name = vector["name"]
+        form = actor_id_form(vector["id"])
+        if vector["accepted"]:
+            report.check(form == vector["form"], f"actor_ids/{name}: accepted as {vector['form']}")
+        else:
+            report.check(form is None, f"actor_ids/{name}: refused ({vector['reason']})")
+
+
 def check_normalization(report: Report) -> None:
     """NFC and NFD are different bytes and therefore different blocks.
 
@@ -334,6 +425,7 @@ def main() -> int:
     check_merkle_roots(report)
     check_inclusion_proofs(report)
     check_schema_selection(report)
+    check_actor_ids(report)
     check_normalization(report)
 
     for failure in report.failures:

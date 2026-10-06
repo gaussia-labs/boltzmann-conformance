@@ -258,6 +258,43 @@ def actor_id_form(value: str) -> str | None:
     return None
 
 
+BRANCH_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+BRANCH_EXTRA = "_-"
+BRANCH_PREFIX = "br."
+DEFAULT_BRANCH = "main"
+MAX_TAG = 128
+
+
+def branch_name_valid(name: str) -> bool:
+    """Whether a branch name follows the grammar, and its tag fits in what OCI allows.
+
+    From the rule rather than from an SDK, like the actor grammar above: a mapping two clients read
+    differently is a branch one of them publishes and the other never lists.
+    """
+    segments = name.split("/")
+    for segment in segments:
+        if not segment or segment[0] not in BRANCH_CHARS:
+            return False
+        if not _is_run(segment, BRANCH_CHARS + BRANCH_EXTRA):
+            return False
+    return name == DEFAULT_BRANCH or len(BRANCH_PREFIX) + len(name) <= MAX_TAG
+
+
+def tag_for_branch(name: str, default_tag: str) -> str:
+    return default_tag if name == DEFAULT_BRANCH else BRANCH_PREFIX + name.replace("/", ".")
+
+
+def branch_for_tag(tag: str, default_tag: str) -> str | None:
+    if tag == default_tag:
+        return DEFAULT_BRANCH
+    if not tag.startswith(BRANCH_PREFIX):
+        return None
+    name = tag[len(BRANCH_PREFIX) :].replace(".", "/")
+    if name == DEFAULT_BRANCH or not branch_name_valid(name):
+        return None
+    return name
+
+
 # --- The checks -------------------------------------------------------------------------------
 
 
@@ -412,6 +449,35 @@ def check_actor_ids(report: Report) -> None:
             report.check(form is None, f"actor_ids/{name}: refused ({vector['reason']})")
 
 
+def check_branch_tags(report: Report) -> None:
+    """Both directions of the branch-tag mapping, each a separate place to disagree.
+
+    A name case is checked by mapping it; an accepted name is also read back from its tag, because a
+    mapping that is not reversible publishes branches nobody can list. A tag case is checked by reading
+    it, which is where an implementation that maps names correctly can still mistake a release tag, or
+    a signature fallback tag, for somebody's branch.
+    """
+    document = load("branch_tags.json")
+    check_header(report, "branch_tags", document)
+    for vector in document["vectors"]:
+        name = vector["name"]
+        default_tag = vector["default_tag"]
+        if vector["kind"] == "name":
+            valid = branch_name_valid(vector["branch"])
+            if vector["accepted"]:
+                report.check(valid, f"branch_tags/{name}: accepted")
+                tag = tag_for_branch(vector["branch"], default_tag)
+                report.check(tag == vector["tag"], f"branch_tags/{name}: maps to {vector['tag']}")
+                report.check(
+                    branch_for_tag(tag, default_tag) == vector["branch"], f"branch_tags/{name}: reads back from its tag"
+                )
+            else:
+                report.check(not valid, f"branch_tags/{name}: refused ({vector['reason']})")
+        else:
+            read = branch_for_tag(vector["tag"], default_tag)
+            report.check(read == vector["branch"], f"branch_tags/{name}: {vector['tag']} names {vector['branch']}")
+
+
 def check_normalization(report: Report) -> None:
     """NFC and NFD are different bytes and therefore different blocks.
 
@@ -436,6 +502,7 @@ def main() -> int:
     check_inclusion_proofs(report)
     check_schema_selection(report)
     check_actor_ids(report)
+    check_branch_tags(report)
     check_normalization(report)
 
     for failure in report.failures:

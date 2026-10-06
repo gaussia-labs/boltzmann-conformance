@@ -51,6 +51,7 @@ file is a promise with nothing behind it and is not a valid corpus file.
 | `serialization.json` | Values and the exact canonical bytes they produce, including the documents that MUST be rejected. |
 | `block_ids.json` | Envelopes and the `block_id` each one hashes to. |
 | `actor_ids.json` | Actor identifiers of both accepted forms, and the ones that MUST be refused, each with its reason. |
+| `branch_tags.json` | Branch names and the OCI tag each maps to, the names that MUST be refused, and tags read back to the branch they name — or to none, for a release or a signature fallback tag. |
 | `schema_selection.json` | Payloads and the `schema_version` oldest-that-fits assigns them against the registered set, including the disjoint case of a version that removes a required member. |
 | `merkle_roots.json` | Leaf sets and the root the construction produces. |
 | `inclusion_proofs.json` | Proofs, each with its leaf index and tree size, and the roots they must reconstruct. |
